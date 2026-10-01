@@ -561,31 +561,51 @@ $('toggleToken').addEventListener('click', () => {
   $('toggleToken').textContent = showing ? 'show' : 'hide';
 });
 
-// ── v2.1: Login GitHub via OAuth Device Flow ──
+// ── v2.2: Login GitHub via OAuth Device Flow ──
 // Token tidak perlu di-copy-paste: pengguna menyetujui di github.com/login/device,
 // kita poll token lalu isi otomatis ke input token. Request ke github.com
-// dilewatkan relay cors.redoc.ly karena endpoint login GitHub tidak mengirim
-// header CORS (hanya endpoint ini; semua call API data tetap direct ke api.github.com).
+// dilewatkan relay CORS karena endpoint login GitHub tidak mengirim header CORS
+// (hanya 2 request ini; semua call API data tetap direct ke api.github.com).
+// Keamanan: token TIDAK disimpan kecuali user mencentang "ingat di browser",
+// dan selalu diverifikasi via GET /user sebelum dipakai.
 const GH_CLIENT_ID = 'Ov23liPG3pVmZ5vZWBkc';
-const RELAY = (u) => 'https://cors.redoc.ly/' + u;
+const RELAYS = ['https://cors.redoc.ly/', 'https://cors.redoc.ly/', 'https://api.codetabs.com/v1/proxy?quest=']; // redoc dicoba 2x (retry) sebelum fallback
 let loginPolling = null;
+let pollFailCount = 0;
 
 function setLoginBtn(label, ok){
   $('loginBtnLabel').textContent = label;
   $('loginBtn').classList.toggle('ok', !!ok);
 }
 
-async function relayPost(url, params){
-  const r = await fetch(RELAY(url), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(params).toString()
+async function verifyToken(token){
+  // Cek token benar-benar valid & tahu siapa pemiliknya (direct ke api.github.com)
+  const r = await fetch('https://api.github.com/user', {
+    headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json' }
   });
-  if (!r.ok) throw new Error('relay HTTP ' + r.status);
-  const text = await r.text();
-  // GitHub menjawab form-urlencoded; relay bisa mengubahnya jadi JSON — tangani dua-duanya
-  try { return JSON.parse(text); }
-  catch(e){ return Object.fromEntries(new URLSearchParams(text)); }
+  if (!r.ok) throw new Error('verifikasi HTTP ' + r.status);
+  return (await r.json()).login;
+}
+
+async function relayPost(url, params){
+  const body = new URLSearchParams(params).toString();
+  let lastErr;
+  for (const base of RELAYS){
+    const u = base.includes('?quest=') ? base + encodeURIComponent(url) : base + url;
+    try {
+      const r = await fetch(u, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body
+      });
+      if (!r.ok){ lastErr = new Error('relay HTTP ' + r.status); continue; }
+      const text = await r.text();
+      // GitHub menjawab form-urlencoded; relay bisa mengubahnya jadi JSON — tangani dua-duanya
+      try { return JSON.parse(text); }
+      catch(e){ return Object.fromEntries(new URLSearchParams(text)); }
+    } catch(e){ lastErr = e; }
+  }
+  throw lastErr || new Error('semua relay gagal');
 }
 
 function stopLoginPolling(){ if (loginPolling){ clearInterval(loginPolling); loginPolling = null; } }
@@ -614,16 +634,19 @@ async function startDeviceLogin(){
   ucode.textContent = dev.user_code;
   ucode.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(dev.user_code); lstat.textContent = 'Kode disalin ✓'; };
   lstat.textContent = 'Menunggu kamu menyetujui di github.com/login/device…';
-  window.open('https://github.com/login/device', '_blank', 'noopener');
+  const win = window.open('https://github.com/login/device', '_blank', 'noopener');
+  if (!win) lstat.textContent += ' (popup diblokir — klik tombol "Buka github.com/login/device")';
 
   const t0 = Date.now();
-  const interval = (dev.interval || 5) * 1000;
+  let interval = (dev.interval || 5) * 1000;
+  let checks = 0;
   loginPolling = setInterval(async () => {
     if (Date.now() - t0 > (dev.expires_in || 899) * 1000){
       stopLoginPolling();
       lstat.className = 'lstat err'; lstat.textContent = 'Kode kedaluwarsa — klik Login lagi.';
       return;
     }
+    checks++;
     let tok;
     try {
       tok = await relayPost('https://github.com/login/oauth/access_token', {
@@ -631,16 +654,39 @@ async function startDeviceLogin(){
         device_code: dev.device_code,
         grant_type: 'urn:ietf:params:oauth:grant-type:device_code'
       });
-    } catch(e){ return; } // relay hiccup — coba poll berikutnya
-    if (tok.error === 'authorization_pending') return;
-    if (tok.error === 'slow_down'){ /* polling terlalu cepat */ return; }
+      pollFailCount = 0;
+    } catch(e){
+      // Jangan diam-diam: tampilkan kalau relay bermasalah berkali-kali
+      if (++pollFailCount >= 3){
+        lstat.className = 'lstat err';
+        lstat.textContent = 'Koneksi ke GitHub bermasalah (' + pollFailCount + 'x gagal) — masih mencoba…';
+      }
+      return;
+    }
+    if (tok.error === 'authorization_pending'){
+      lstat.className = 'lstat';
+      lstat.textContent = 'Belum terdeteksi (' + checks + ') — pastikan kamu menekan tombol hijau "Authorize UpRepo" di halaman GitHub.';
+      return;
+    }
+    if (tok.error === 'slow_down'){ interval += 5000; return; }
     stopLoginPolling();
     if (tok.access_token){
-      tokenEl.value = tok.access_token;
-      lstat.className = 'lstat ok';
-      lstat.textContent = '✓ Login sukses! Token terisi otomatis.';
-      setLoginBtn('✓ Login', true);
-      setTimeout(() => modal.classList.remove('open'), 1600);
+      // Verifikasi token sebelum dipakai/disisimpan
+      lstat.className = 'lstat';
+      lstat.textContent = 'Token diterima — memverifikasi akun…';
+      try {
+        const login = await verifyToken(tok.access_token);
+        tokenEl.value = tok.access_token;
+        tokenEl.dispatchEvent(new Event('input'));
+        lstat.className = 'lstat ok';
+        lstat.textContent = '✓ Login sukses sebagai ' + login + '!' +
+          ($('rememberTok').checked ? '' : ' (token tidak disimpan — hilang saat tab ditutup)');
+        setLoginBtn('✓ ' + login, true);
+        setTimeout(() => modal.classList.remove('open'), 2200);
+      } catch(e){
+        lstat.className = 'lstat err';
+        lstat.textContent = 'Token diterima tapi gagal diverifikasi: ' + e.message;
+      }
     } else {
       lstat.className = 'lstat err';
       lstat.textContent = 'Gagal: ' + (tok.error_description || tok.error || 'tidak diketahui');
@@ -651,13 +697,28 @@ async function startDeviceLogin(){
 $('loginBtn').addEventListener('click', startDeviceLogin);
 $('loginClose').addEventListener('click', () => { stopLoginPolling(); $('loginModal').classList.remove('open'); });
 $('loginOpenGh').addEventListener('click', () => window.open('https://github.com/login/device', '_blank', 'noopener'));
-// Kalau token sudah tersimpan dari sesi sebelumnya (localStorage), tampilkan status login
+// Token tersimpan HANYA kalau user mencentang "ingat di browser ini"
 try {
-  const saved = localStorage.getItem('uprepo_token');
-  if (saved){ tokenEl.value = saved; setLoginBtn('✓ Login', true); }
+  const saved = sessionStorage.getItem('uprepo_token') || localStorage.getItem('uprepo_token');
+  if (saved){ tokenEl.value = saved; setLoginBtn('✓ Login', true); $('rememberTok').checked = !!localStorage.getItem('uprepo_token'); }
   tokenEl.addEventListener('input', () => {
-    try { tokenEl.value ? localStorage.setItem('uprepo_token', tokenEl.value) : localStorage.removeItem('uprepo_token'); } catch(e){}
+    try {
+      if (!tokenEl.value){
+        sessionStorage.removeItem('uprepo_token'); localStorage.removeItem('uprepo_token');
+      } else if ($('rememberTok').checked){
+        localStorage.setItem('uprepo_token', tokenEl.value);
+      } else {
+        sessionStorage.setItem('uprepo_token', tokenEl.value);
+      }
+    } catch(e){}
     setLoginBtn(tokenEl.value ? '✓ Login' : 'Login GitHub', !!tokenEl.value);
+  });
+  $('rememberTok').addEventListener('change', () => {
+    try {
+      if (!tokenEl.value) return;
+      if ($('rememberTok').checked){ sessionStorage.removeItem('uprepo_token'); localStorage.setItem('uprepo_token', tokenEl.value); }
+      else { localStorage.removeItem('uprepo_token'); sessionStorage.setItem('uprepo_token', tokenEl.value); }
+    } catch(e){}
   });
 } catch(e){}
 
@@ -1423,8 +1484,13 @@ closeViewerBtn.addEventListener('click', () => viewerEl.classList.remove('show')
     <h3>🔐 Login GitHub</h3>
     <p id="loginStep1">1. Klik kode di bawah untuk menyalin, lalu buka halaman aktivasi:</p>
     <div class="ucode" id="ucode" title="klik untuk salin">····-····</div>
-    <p>2. Buka <a href="https://github.com/login/device" target="_blank" rel="noopener">github.com/login/device</a> dan tempel kodenya, lalu izinkan <b>UpRepo</b>.</p>
+    <p>2. Buka <a href="https://github.com/login/device" target="_blank" rel="noopener">github.com/login/device</a> dan tempel kodenya, lalu tekan tombol hijau <b>Authorize UpRepo</b>.</p>
     <div class="lstat" id="lstat">Menunggu otorisasi…</div>
+    <label class="checkbox-row" for="rememberTok" style="margin-top:10px;">
+      <input type="checkbox" id="rememberTok">
+      Ingat login di browser ini (token disimpan lokal)
+    </label>
+    <p class="vnote">🔒 Token hanya tersimpan di browser kamu dan hanya dikirim ke api.github.com. Kalau tidak dicentang, token hilang otomatis saat tab ditutup. Cek & cabut akses kapan pun di <a href="https://github.com/settings/applications" target="_blank" rel="noopener">Settings → Applications</a>.</p>
     <div class="login-actions">
       <button type="button" class="mini-btn" id="loginOpenGh">Buka github.com/login/device ↗</button>
       <button type="button" class="mini-btn ghost2" id="loginClose">Tutup</button>
