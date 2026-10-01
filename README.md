@@ -38,6 +38,7 @@ UpRepo adalah web app satu file (`index.html`) yang berjalan 100% di browser kam
 
 ## 🩹 Changelog Perbaikan
 
+- **v2 — Repo Browser** — list, lihat, edit, simpan & hapus file langsung dari browser (Contents API), dengan breadcrumb navigasi folder
 - **XSS via nama file** — nama file dari zip sekarang di-escape sebelum dirender (dulu raw `innerHTML`)
 - **Rate limit GitHub** — pembuatan blob dibatch 8 file/batch (dulu semua paralel → 403 abuse detection di zip besar)
 - **Error handling** — semua fetch diberi try/catch + pesan error yang jelas di console

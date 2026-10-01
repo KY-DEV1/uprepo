@@ -334,6 +334,52 @@
     font-size:12px;
     line-height:1.6;
   }
+
+  /* ── v2: repo browser ── */
+  .browser-section{margin-top:26px;}
+  .browser-panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:26px;}
+  .browser-panel h2{
+    font-family:'Space Grotesk', sans-serif;
+    font-size:15px;font-weight:600;margin:0 0 20px;display:flex;align-items:center;gap:8px;
+  }
+  .filelist{
+    border:1px solid var(--border);border-radius:8px;max-height:320px;overflow-y:auto;
+    font-family:'IBM Plex Mono', monospace;font-size:12.5px;
+  }
+  .filelist .fitem{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:9px 14px;border-bottom:1px solid var(--border);
+  }
+  .filelist .fitem:last-child{border-bottom:none;}
+  .filelist .fitem .fname2{color:var(--text);cursor:pointer;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .filelist .fitem .fname2:hover{color:var(--green);}
+  .filelist .fitem .fmeta{color:#5b6070;white-space:nowrap;font-size:11px;}
+  .filelist .fitem .faction{background:none;border:none;color:var(--focus);font-family:inherit;font-size:11px;cursor:pointer;padding:2px 6px;border-radius:4px;}
+  .filelist .fitem .faction:hover{background:rgba(127,176,224,0.12);}
+  .filelist .fitem .faction.del:hover{background:rgba(229,83,75,0.12);color:var(--red);}
+  .filelist .empty{padding:22px;text-align:center;color:#5b6070;font-size:12px;}
+  .dir-crumb{font-family:'IBM Plex Mono', monospace;font-size:12px;color:var(--dim);margin-bottom:10px;}
+  .dir-crumb a{color:var(--focus);text-decoration:none;cursor:pointer;}
+  .dir-crumb a:hover{text-decoration:underline;}
+  .viewer{display:none;margin-top:14px;}
+  .viewer.show{display:block;}
+  .viewer textarea{
+    width:100%;min-height:260px;resize:vertical;
+    background:var(--panel-2);border:1px solid var(--border);color:var(--text);
+    font-family:'IBM Plex Mono', monospace;font-size:12.5px;line-height:1.6;
+    padding:12px;border-radius:8px;outline:none;white-space:pre;
+  }
+  .viewer .vhead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;}
+  .viewer .vhead .vname{font-family:'IBM Plex Mono', monospace;font-size:12.5px;color:var(--green);word-break:break-all;}
+  .mini-btn{
+    background:rgba(95,184,122,0.12);border:1px solid rgba(95,184,122,0.35);color:var(--green);
+    font-family:'IBM Plex Mono', monospace;font-size:11.5px;padding:6px 14px;border-radius:6px;cursor:pointer;
+  }
+  .mini-btn:hover{filter:brightness(1.15);}
+  .mini-btn.danger{background:rgba(229,83,75,0.1);border-color:rgba(229,83,75,0.4);color:var(--red);}
+  .mini-btn.ghost2{background:transparent;border-color:var(--border);color:var(--dim);}
+  .viewer .vnote{font-size:11px;color:#6a7080;margin-top:8px;}
+  .browser-hint{font-size:11.5px;color:#6a7080;margin-top:12px;line-height:1.5;}
 </style>
 </head>
 <body>
@@ -431,6 +477,38 @@
   <footer>
     Berjalan sepenuhnya di browser kamu — tidak ada server perantara. Permintaan dikirim langsung ke <code>api.github.com</code> memakai token yang kamu masukkan. File <code>.zip</code> otomatis dibongkar di browser (pakai JSZip, tidak diupload ke mana pun) lalu tiap isinya di-push jadi satu commit — bisa dimatikan lewat checkbox kalau maunya file .zip-nya sendiri yang diupload. Untuk file/zip besar (puluhan MB), proses hashing &amp; ekstraksi bisa memakan waktu beberapa detik.
   </footer>
+
+  <div class="browser-section">
+    <div class="browser-panel">
+      <h2>🗂️ Repo browser <span style="font-size:10px;color:var(--amber);border:1px solid rgba(217,164,65,0.4);border-radius:10px;padding:2px 9px;">v2</span></h2>
+      <div class="field row2">
+        <div>
+          <label for="browseRepo">Repository</label>
+          <input type="text" id="browseRepo" placeholder="owner/nama-repo">
+        </div>
+        <div>
+          <label for="browseBranch">Branch</label>
+          <input type="text" id="browseBranch" value="main">
+        </div>
+      </div>
+      <button type="button" class="mini-btn" id="browseBtn">Muat file</button>
+      <div class="dir-crumb" id="dirCrumb" style="display:none;"></div>
+      <div class="filelist" id="fileList" style="display:none;margin-top:12px;"></div>
+      <div class="viewer" id="viewer">
+        <div class="vhead">
+          <span class="vname" id="viewName"></span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" class="mini-btn" id="saveFileBtn">💾 Save & commit</button>
+            <button type="button" class="mini-btn danger" id="deleteFileBtn">🗑 Hapus</button>
+            <button type="button" class="mini-btn ghost2" id="closeViewerBtn">✕ tutup</button>
+          </div>
+        </div>
+        <textarea id="viewText" spellcheck="false"></textarea>
+        <div class="vnote" id="viewNote"></div>
+      </div>
+      <p class="browser-hint">Pakai token yang sama seperti di atas. Klik nama file untuk lihat/edit isinya (file teks), tombol 💾 commit perubahan, 🗑 hapus file. File binary ditampilkan read-only.</p>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -1036,6 +1114,183 @@ pushBtn.addEventListener('click', async () => {
     pushBtn.textContent = 'Push ke GitHub';
   }
 });
+
+// ── v2: Repo browser — list, view/edit, delete files via Contents API ──
+const browseRepoEl = $('browseRepo'), browseBranchEl = $('browseBranch'),
+      browseBtn = $('browseBtn'), dirCrumbEl = $('dirCrumb'), fileListEl = $('fileList'),
+      viewerEl = $('viewer'), viewNameEl = $('viewName'), viewTextEl = $('viewText'),
+      viewNoteEl = $('viewNote'), saveFileBtn = $('saveFileBtn'),
+      deleteFileBtn = $('deleteFileBtn'), closeViewerBtn = $('closeViewerBtn');
+
+let browseDir = '';           // current directory being listed ('' = root)
+let currentFile = null;       // { path, sha, isBinary }
+
+function bToken(){ return tokenEl.value.trim(); }
+
+async function listDir(repo, branch, dir){
+  const [owner, name] = repo.split('/');
+  const enc = dir ? '/' + dir.split('/').map(encodeURIComponent).join('/') : '';
+  const res = await fetch(`${API}/repos/${owner}/${name}/contents${enc}?ref=${encodeURIComponent(branch)}`, { headers: ghHeaders(bToken()) });
+  if (!res.ok) throw new Error(await apiMessage(res));
+  return res.json();
+}
+
+function renderCrumb(repo, branch){
+  const parts = browseDir ? browseDir.split('/') : [];
+  let html = `<a data-go="">${repo}</a>`;
+  let acc = '';
+  for (const p of parts){
+    acc += (acc ? '/' : '') + p;
+    html += ` / <a data-go="${escapeHtml(acc)}">${escapeHtml(p)}</a>`;
+  }
+  dirCrumbEl.innerHTML = html;
+  dirCrumbEl.querySelectorAll('a').forEach(a => {
+    a.addEventListener('click', () => { browseDir = a.dataset.go; loadListing(); });
+  });
+}
+
+async function loadListing(){
+  const repo = browseRepoEl.value.trim();
+  const branch = browseBranchEl.value.trim() || 'main';
+  if (!repo || !bToken()) return alert('Isi token & repository dulu (token pakai kolom di panel atas).');
+
+  browseBtn.disabled = true;
+  browseBtn.textContent = 'Memuat…';
+  viewerEl.classList.remove('show');
+  try {
+    const items = await listDir(repo, branch, browseDir);
+    renderCrumb(repo, branch);
+    dirCrumbEl.style.display = 'block';
+    fileListEl.style.display = 'block';
+    if (!Array.isArray(items) || items.length === 0){
+      fileListEl.innerHTML = '<div class="empty">folder kosong</div>';
+      return;
+    }
+    items.sort((a, b) => (a.type === b.type) ? a.name.localeCompare(b.name) : (a.type === 'dir' ? -1 : 1));
+    fileListEl.innerHTML = '';
+    for (const it of items){
+      const row = document.createElement('div');
+      row.className = 'fitem';
+      const label = it.type === 'dir' ? '📁 ' + it.name : (it.type === 'file' ? '📄 ' : '• ') + it.name;
+      row.innerHTML = `<span class="fname2">${escapeHtml(label)}</span>` +
+        (it.type === 'file' ? `<span class="fmeta">${formatSize(it.size)}</span>
+         <button class="faction" data-a="view">lihat</button>
+         <button class="faction del" data-a="del">hapus</button>` : '');
+      const fname2 = row.querySelector('.fname2');
+      if (it.type === 'dir'){
+        fname2.addEventListener('click', () => { browseDir = browseDir ? browseDir + '/' + it.name : it.name; loadListing(); });
+      } else {
+        const path = browseDir ? browseDir + '/' + it.name : it.name;
+        fname2.addEventListener('click', () => openFile(path));
+        const vbtn = row.querySelector('[data-a="view"]');
+        if (vbtn) vbtn.addEventListener('click', () => openFile(path));
+        const dbtn = row.querySelector('[data-a="del"]');
+        if (dbtn) dbtn.addEventListener('click', () => deleteFile(path, it.sha));
+      }
+      fileListEl.appendChild(row);
+    }
+  } catch (e) {
+    fileListEl.style.display = 'block';
+    fileListEl.innerHTML = `<div class="empty">✗ ${escapeHtml(e.message)}</div>`;
+    dirCrumbEl.style.display = 'none';
+  } finally {
+    browseBtn.disabled = false;
+    browseBtn.textContent = 'Muat file';
+  }
+}
+browseBtn.addEventListener('click', loadListing);
+
+// repo field auto-sync: typing a repo in the push panel prefills the browser panel
+repoEl.addEventListener('input', () => { if (!browseRepoEl.dataset.touched) browseRepoEl.value = repoEl.value; });
+browseRepoEl.addEventListener('input', () => { browseRepoEl.dataset.touched = '1'; });
+
+async function openFile(path){
+  const repo = browseRepoEl.value.trim();
+  const branch = browseBranchEl.value.trim() || 'main';
+  const [owner, name] = repo.split('/');
+  try {
+    const enc = path.split('/').map(encodeURIComponent).join('/');
+    const res = await fetch(`${API}/repos/${owner}/${name}/contents/${enc}?ref=${encodeURIComponent(branch)}`, { headers: ghHeaders(bToken()) });
+    if (!res.ok) throw new Error(await apiMessage(res));
+    const data = await res.json();
+    currentFile = { path, sha: data.sha };
+    const isBinary = data.encoding !== 'base64' && data.content != null ? false : true;
+    // GitHub returns text files base64-encoded with encoding:'base64' too; distinguish via content type
+    const likelyBinary = /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|tar|bin|exe|dll|so|woff2?|ttf|eot|mp3|mp4|wav|ogg)$/i.test(path);
+    if (likelyBinary){
+      viewTextEl.value = `(file binary — ${formatSize(data.size)}) tidak bisa diedit di sini`;
+      viewTextEl.readOnly = true;
+      saveFileBtn.style.display = 'none';
+    } else {
+      const decoded = data.encoding === 'base64'
+        ? decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))))
+        : (data.content || '');
+      viewTextEl.value = decoded;
+      viewTextEl.readOnly = false;
+      saveFileBtn.style.display = '';
+    }
+    viewNameEl.textContent = `${repo}@${branch} / ${path}`;
+    viewNoteEl.textContent = '';
+    viewerEl.classList.add('show');
+    viewerEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (e) {
+    alert('Gagal membuka file: ' + e.message);
+  }
+}
+
+async function commitFileChange(path, contentB64, sha, message){
+  const repo = browseRepoEl.value.trim();
+  const branch = browseBranchEl.value.trim() || 'main';
+  const [owner, name] = repo.split('/');
+  const enc = path.split('/').map(encodeURIComponent).join('/');
+  const res = await fetch(`${API}/repos/${owner}/${name}/contents/${enc}`, {
+    method: 'PUT',
+    headers: { ...ghHeaders(bToken()), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, content: contentB64, sha, branch })
+  });
+  if (!res.ok) throw new Error(await apiMessage(res));
+  return res.json();
+}
+
+saveFileBtn.addEventListener('click', async () => {
+  if (!currentFile) return;
+  const msg = prompt('Commit message:', `Update ${currentFile.path.split('/').pop()}`);
+  if (msg === null) return;
+  saveFileBtn.disabled = true;
+  saveFileBtn.textContent = 'Menyimpan…';
+  try {
+    const bytes = new TextEncoder().encode(viewTextEl.value);
+    await commitFileChange(currentFile.path, arrayBufferToBase64(bytes), currentFile.sha, msg || `Update ${currentFile.path}`);
+    viewNoteEl.textContent = '✓ tersimpan — commit berhasil';
+    viewNoteEl.style.color = 'var(--green)';
+    await openFile(currentFile.path);   // refresh sha
+  } catch (e) {
+    viewNoteEl.textContent = '✗ ' + e.message;
+    viewNoteEl.style.color = 'var(--red)';
+  } finally {
+    saveFileBtn.disabled = false;
+    saveFileBtn.textContent = '💾 Save & commit';
+  }
+});
+
+async function deleteFile(path, sha){
+  if (!confirm(`Hapus ${path}? Ini bikin commit penghapusan di repo.`)) return;
+  const repo = browseRepoEl.value.trim();
+  const branch = browseBranchEl.value.trim() || 'main';
+  const [owner, name] = repo.split('/');
+  const enc = path.split('/').map(encodeURIComponent).join('/');
+  const res = await fetch(`${API}/repos/${owner}/${name}/contents/${enc}`, {
+    method: 'DELETE',
+    headers: { ...ghHeaders(bToken()), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: `Delete ${path}`, sha, branch })
+  });
+  if (!res.ok){ alert('Gagal hapus: ' + await apiMessage(res)); return; }
+  viewerEl.classList.remove('show');
+  await loadListing();
+}
+
+deleteFileBtn.addEventListener('click', () => { if (currentFile) deleteFile(currentFile.path, currentFile.sha); });
+closeViewerBtn.addEventListener('click', () => viewerEl.classList.remove('show'));
 </script>
 </body>
 </html>
