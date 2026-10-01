@@ -419,6 +419,15 @@ function formatSize(bytes){
   return (bytes/(1024*1024)).toFixed(2) + ' MB';
 }
 
+// Escapes text before it goes into any innerHTML (zip entry names and repo
+// paths come from files the user picked — a crafted archive can contain a
+// filename like `<img src=x onerror=…>`, which must render as text only).
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
 // A real .zip always starts with a "PK" signature (PK\x03\x04 for a normal
 // archive, PK\x05\x06 for an empty one, PK\x07\x08 for a spanned one). If a
 // file named *.zip doesn't start with that, the file picker almost certainly
@@ -472,7 +481,7 @@ function renderZipList(files, skipped){
 
   const shown = files.slice(0, 200);
   ziplistEl.innerHTML = shown.map(f =>
-    `<div class="zf"><span>${f.path}</span><span>${formatSize(f.size)}</span></div>`
+    `<div class="zf"><span>${escapeHtml(f.path)}</span><span>${formatSize(f.size)}</span></div>`
   ).join('') + (files.length > shown.length ? `<div class="zmore">+ ${files.length - shown.length} file lainnya</div>` : '');
 }
 
@@ -582,6 +591,9 @@ $('clearFile').addEventListener('click', () => {
   zipboxEl.classList.remove('show');
   zipsummaryEl.classList.remove('show');
   ziplistEl.classList.remove('show');
+  diffbar.style.width = '0%';
+  pathEl.value = '';      // reset juga nilai lama biar gak nyangkut dari file sebelumnya
+  messageEl.value = '';
   updateModeUI();
 });
 
@@ -596,13 +608,22 @@ function arrayBufferToBase64(buffer){
 }
 
 function clearConsole(){ consoleEl.innerHTML = ''; }
-function consoleLine(html, cls){
+function consoleLine(text, cls){
   const el = document.createElement('div');
   el.className = 'line' + (cls ? ' ' + cls : '');
-  el.innerHTML = html;
+  el.textContent = text;   // textContent, bukan innerHTML — path file bisa mengandung karakter HTML
   consoleEl.appendChild(el);
   consoleEl.scrollTop = consoleEl.scrollHeight;
   return el;
+}
+function consoleLink(url){
+  const el = document.createElement('div');
+  const a = document.createElement('a');
+  a.href = url; a.target = '_blank'; a.rel = 'noopener';
+  a.textContent = url;
+  el.appendChild(a);
+  consoleEl.appendChild(el);
+  consoleEl.scrollTop = consoleEl.scrollHeight;
 }
 function step(text){
   const el = consoleLine('› ' + text + '…', 'pending');
@@ -785,7 +806,13 @@ async function pushFiles({ token, repo, branch, files, message, createRepo, visi
   }
 
   const sBase = step(`membaca base tree dari commit ${short(commitSha)}`);
-  const commitRes = await fetch(`${API}/repos/${owner}/${name}/git/commits/${commitSha}`, { headers: ghHeaders(token) });
+  let commitRes;
+  try {
+    commitRes = await fetch(`${API}/repos/${owner}/${name}/git/commits/${commitSha}`, { headers: ghHeaders(token) });
+  } catch (e) {
+    sBase.fail('gagal menghubungi api.github.com (cek koneksi)');
+    throw e;
+  }
   if (!commitRes.ok){
     const msg = await apiMessage(commitRes);
     sBase.fail(msg);
@@ -795,18 +822,30 @@ async function pushFiles({ token, repo, branch, files, message, createRepo, visi
   baseTreeSha = commitData.tree.sha;
   sBase.done(short(baseTreeSha));
 
-  const sBlob = step(remaining.length === 1 ? 'hashing object' : `hashing ${remaining.length} object`);
+  let sBlob = step(remaining.length === 1 ? 'hashing object' : `hashing ${remaining.length} object`);
   let treeEntries;
   try {
-    treeEntries = await Promise.all(remaining.map(async (f) => {
-      const blobRes = await fetch(`${API}/repos/${owner}/${name}/git/blobs`, {
-        method: 'POST', headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: f.base64, encoding: 'base64' })
-      });
-      if (!blobRes.ok) throw new Error(await apiMessage(blobRes));
-      const blobData = await blobRes.json();
-      return { path: f.path, mode: '100644', type: 'blob', sha: blobData.sha };
-    }));
+    // Blob creation is throttled in small batches instead of one Promise.all
+    // over everything: a few-hundred-file zip fired as parallel requests trips
+    // GitHub's secondary rate limiting (HTTP 403 "abuse detection") and fails
+    // the whole push. 8 at a time stays well under that threshold.
+    const BATCH = 8;
+    treeEntries = [];
+    for (let i = 0; i < remaining.length; i += BATCH){
+      const batch = remaining.slice(i, i + BATCH);
+      const results = await Promise.all(batch.map(async (f) => {
+        const blobRes = await fetch(`${API}/repos/${owner}/${name}/git/blobs`, {
+          method: 'POST', headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: f.base64, encoding: 'base64' })
+        });
+        if (!blobRes.ok) throw new Error(await apiMessage(blobRes));
+        const blobData = await blobRes.json();
+        return { path: f.path, mode: '100644', type: 'blob', sha: blobData.sha };
+      }));
+      treeEntries.push(...results);
+      sBlob.done(`${treeEntries.length}/${remaining.length} blob`);
+      sBlob = step(`hashing ${remaining.length} object (${treeEntries.length}/${remaining.length})`);
+    }
   } catch (e) {
     sBlob.fail(e.message);
     throw e;
@@ -815,10 +854,16 @@ async function pushFiles({ token, repo, branch, files, message, createRepo, visi
 
   const sTree = step('membangun tree');
   const treeBody = { base_tree: baseTreeSha, tree: treeEntries };
-  const treeRes = await fetch(`${API}/repos/${owner}/${name}/git/trees`, {
-    method: 'POST', headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
-    body: JSON.stringify(treeBody)
-  });
+  let treeRes;
+  try {
+    treeRes = await fetch(`${API}/repos/${owner}/${name}/git/trees`, {
+      method: 'POST', headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
+      body: JSON.stringify(treeBody)
+    });
+  } catch (e) {
+    sTree.fail('gagal menghubungi api.github.com (cek koneksi)');
+    throw e;
+  }
   if (!treeRes.ok){
     const msg = await apiMessage(treeRes);
     sTree.fail(msg);
@@ -829,10 +874,16 @@ async function pushFiles({ token, repo, branch, files, message, createRepo, visi
 
   const sCommit = step(`menulis commit "${message}"`);
   const commitBody = { message, tree: treeData.sha, parents: [commitSha] };
-  const newCommitRes = await fetch(`${API}/repos/${owner}/${name}/git/commits`, {
-    method: 'POST', headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
-    body: JSON.stringify(commitBody)
-  });
+  let newCommitRes;
+  try {
+    newCommitRes = await fetch(`${API}/repos/${owner}/${name}/git/commits`, {
+      method: 'POST', headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
+      body: JSON.stringify(commitBody)
+    });
+  } catch (e) {
+    sCommit.fail('gagal menghubungi api.github.com (cek koneksi)');
+    throw e;
+  }
   if (!newCommitRes.ok){
     const msg = await apiMessage(newCommitRes);
     sCommit.fail(msg);
@@ -842,10 +893,16 @@ async function pushFiles({ token, repo, branch, files, message, createRepo, visi
   sCommit.done('commit ' + short(newCommitData.sha));
 
   const sRefUpdate = step(`memperbarui refs/heads/${branch}`);
-  const updateRes = await fetch(`${API}/repos/${owner}/${name}/git/refs/heads/${branch}`, {
-    method: 'PATCH', headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sha: newCommitData.sha })
-  });
+  let updateRes;
+  try {
+    updateRes = await fetch(`${API}/repos/${owner}/${name}/git/refs/heads/${branch}`, {
+      method: 'PATCH', headers: { ...ghHeaders(token), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sha: newCommitData.sha })
+    });
+  } catch (e) {
+    sRefUpdate.fail('gagal menghubungi api.github.com (cek koneksi)');
+    throw e;
+  }
   if (!updateRes.ok){
     const msg = await apiMessage(updateRes);
     sRefUpdate.fail(msg);
@@ -909,11 +966,11 @@ pushBtn.addEventListener('click', async () => {
     if (files.length === 1){
       const url = `https://github.com/${result.owner}/${result.name}/blob/${result.branch}/${files[0].path}`;
       consoleLine(`✓ pushed ke ${result.owner}/${result.name}@${result.branch}`, 'success');
-      consoleLine(`<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
+      consoleLink(url);
     } else {
       const url = `https://github.com/${result.owner}/${result.name}/tree/${result.branch}${prefix ? '/' + prefix : ''}`;
       consoleLine(`✓ pushed ${files.length} file ke ${result.owner}/${result.name}@${result.branch}`, 'success');
-      consoleLine(`<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
+      consoleLink(url);
     }
   } catch (err) {
     consoleLine('$ push dibatalkan — perbaiki error di atas lalu coba lagi', 'fail');
