@@ -6,6 +6,7 @@ UpRepo adalah web app satu file (`index.html`) yang berjalan 100% di browser kam
 
 ## ✨ Fitur
 
+- 🔐 **Login GitHub 1 klik (OAuth Device Flow)** — nggak perlu copy-paste token lagi; klik Login, setujui di GitHub, token terisi & tersimpan otomatis
 - 📄 **Push satu file** ke repo GitHub mana pun via Personal Access Token
 - 🗜️ **Auto-extract ZIP** — upload `.zip` dan seluruh isinya jadi **satu commit** (bisa dimatikan via checkbox kalau mau file .zip mentah)
 - 🆕 **Auto-create repo** — kalau repo belum ada, langsung dibuat otomatis (private/public, pilih sendiri)
@@ -18,10 +19,11 @@ UpRepo adalah web app satu file (`index.html`) yang berjalan 100% di browser kam
 ## 🚀 Cara Pakai
 
 1. Buka `index.html` di browser (atau host via GitHub Pages)
-2. Buat [Personal Access Token](https://github.com/settings/personal-access-tokens/new):
+2. **Klik tombol `Login GitHub`** di kanan atas → kode muncul → klik **Buka github.com/login/device**, tempel kodenya, klik **Authorize** → token terisi otomatis 🎉
+   - Mau pakai token sendiri? Masih bisa: buat [Personal Access Token](https://github.com/settings/personal-access-tokens/new) lalu tempel manual
    - **Fine-grained** → izin `Contents: Read and write`
    - **Classic** → scope `repo` (wajib classic kalau mau fitur buat repo baru di akun pribadi)
-3. Isi token, tujuan repo (`owner/nama-repo`), branch, path, dan commit message
+3. Isi tujuan repo (`owner/nama-repo`), branch, path, dan commit message
 4. Seret file (atau klik untuk pilih) → klik **Push ke GitHub**
 5. Selesai! Link file langsung muncul di console ✅
 
@@ -38,6 +40,7 @@ UpRepo adalah web app satu file (`index.html`) yang berjalan 100% di browser kam
 
 ## 🩹 Changelog Perbaikan
 
+- **v2.1 — Login GitHub (OAuth Device Flow)** — tombol Login di topbar; token didapat otomatis via github.com/login/device tanpa copy-paste, tersimpan di browser (localStorage)
 - **v2 — Repo Browser** — list, lihat, edit, simpan & hapus file langsung dari browser (Contents API), dengan breadcrumb navigasi folder
 - **XSS via nama file** — nama file dari zip sekarang di-escape sebelum dirender (dulu raw `innerHTML`)
 - **Rate limit GitHub** — pembuatan blob dibatch 8 file/batch (dulu semua paralel → 403 abuse detection di zip besar)
