@@ -380,6 +380,28 @@
   .mini-btn.ghost2{background:transparent;border-color:var(--border);color:var(--dim);}
   .viewer .vnote{font-size:11px;color:#6a7080;margin-top:8px;}
   .browser-hint{font-size:11.5px;color:#6a7080;margin-top:12px;line-height:1.5;}
+
+  /* ── v2.1: login GitHub (device flow) ── */
+  .login-btn{display:inline-flex;align-items:center;gap:7px;background:rgba(95,184,122,0.15);
+    border:1px solid rgba(95,184,122,0.45);color:var(--green);font-family:'IBM Plex Mono',monospace;
+    font-size:12px;padding:7px 14px;border-radius:7px;cursor:pointer;transition:filter .15s;}
+  .login-btn:hover{filter:brightness(1.2);}
+  .login-btn.ok{background:rgba(95,184,122,0.25);border-color:var(--green);}
+  .login-modal{position:fixed;inset:0;background:rgba(10,14,12,0.78);backdrop-filter:blur(4px);
+    display:none;align-items:center;justify-content:center;z-index:1000;padding:20px;}
+  .login-modal.open{display:flex;}
+  .login-card{background:#12181a;border:1px solid var(--border);border-radius:12px;padding:26px;
+    max-width:400px;width:100%;font-family:'IBM Plex Mono',monospace;}
+  .login-card h3{margin:0 0 12px;font-size:15px;color:var(--text);}
+  .login-card p{font-size:12px;color:var(--dim);line-height:1.6;margin:8px 0;}
+  .ucode{font-size:30px;letter-spacing:6px;text-align:center;color:var(--green);
+    background:rgba(95,184,122,0.08);border:1px dashed rgba(95,184,122,0.4);border-radius:8px;
+    padding:14px 8px;margin:14px 0;user-select:all;cursor:pointer;}
+  .ucode:hover{filter:brightness(1.15);}
+  .lstat{font-size:11.5px;color:#6a7080;min-height:16px;margin:10px 0;}
+  .lstat.err{color:var(--red);}
+  .lstat.ok{color:var(--green);}
+  .login-actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;}
 </style>
 </head>
 <body>
@@ -390,6 +412,10 @@
       UpRepo
     </div>
     <a class="gh" href="https://github.com/Teravenaq/uprepo" target="_blank" rel="noopener">github.com/Teravenaq/uprepo ↗</a>
+    <button type="button" id="loginBtn" class="login-btn" title="Login via GitHub Device Flow — token otomatis tanpa copy-paste">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      <span id="loginBtnLabel">Login GitHub</span>
+    </button>
   </nav>
   <p class="eyebrow">Git Data API</p>
   <h1>Push satu file langsung ke repo GitHub</h1>
@@ -534,6 +560,106 @@ $('toggleToken').addEventListener('click', () => {
   tokenEl.type = showing ? 'password' : 'text';
   $('toggleToken').textContent = showing ? 'show' : 'hide';
 });
+
+// ── v2.1: Login GitHub via OAuth Device Flow ──
+// Token tidak perlu di-copy-paste: pengguna menyetujui di github.com/login/device,
+// kita poll token lalu isi otomatis ke input token. Request ke github.com
+// dilewatkan relay cors.redoc.ly karena endpoint login GitHub tidak mengirim
+// header CORS (hanya endpoint ini; semua call API data tetap direct ke api.github.com).
+const GH_CLIENT_ID = 'Ov23liPG3pVmZ5vZWBkc';
+const RELAY = (u) => 'https://cors.redoc.ly/' + u;
+let loginPolling = null;
+
+function setLoginBtn(label, ok){
+  $('loginBtnLabel').textContent = label;
+  $('loginBtn').classList.toggle('ok', !!ok);
+}
+
+async function relayPost(url, params){
+  const r = await fetch(RELAY(url), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(params).toString()
+  });
+  if (!r.ok) throw new Error('relay HTTP ' + r.status);
+  const text = await r.text();
+  // GitHub menjawab form-urlencoded; relay bisa mengubahnya jadi JSON — tangani dua-duanya
+  try { return JSON.parse(text); }
+  catch(e){ return Object.fromEntries(new URLSearchParams(text)); }
+}
+
+function stopLoginPolling(){ if (loginPolling){ clearInterval(loginPolling); loginPolling = null; } }
+
+async function startDeviceLogin(){
+  stopLoginPolling();
+  const modal = $('loginModal'), ucode = $('ucode'), lstat = $('lstat');
+  modal.classList.add('open');
+  ucode.textContent = '····-····';
+  lstat.className = 'lstat'; lstat.textContent = 'Meminta kode dari GitHub…';
+  let dev;
+  try {
+    dev = await relayPost('https://github.com/login/device/code', {
+      client_id: GH_CLIENT_ID, scope: 'repo'
+    });
+  } catch(e){
+    lstat.className = 'lstat err';
+    lstat.textContent = 'Gagal menghubungi GitHub (relay) — ' + e.message + '. Coba lagi.';
+    return;
+  }
+  if (dev.error){ // mis. device_flow_disabled
+    lstat.className = 'lstat err';
+    lstat.textContent = 'GitHub menolak: ' + (dev.error_description || dev.error);
+    return;
+  }
+  ucode.textContent = dev.user_code;
+  ucode.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(dev.user_code); lstat.textContent = 'Kode disalin ✓'; };
+  lstat.textContent = 'Menunggu kamu menyetujui di github.com/login/device…';
+  window.open('https://github.com/login/device', '_blank', 'noopener');
+
+  const t0 = Date.now();
+  const interval = (dev.interval || 5) * 1000;
+  loginPolling = setInterval(async () => {
+    if (Date.now() - t0 > (dev.expires_in || 899) * 1000){
+      stopLoginPolling();
+      lstat.className = 'lstat err'; lstat.textContent = 'Kode kedaluwarsa — klik Login lagi.';
+      return;
+    }
+    let tok;
+    try {
+      tok = await relayPost('https://github.com/login/oauth/access_token', {
+        client_id: GH_CLIENT_ID,
+        device_code: dev.device_code,
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code'
+      });
+    } catch(e){ return; } // relay hiccup — coba poll berikutnya
+    if (tok.error === 'authorization_pending') return;
+    if (tok.error === 'slow_down'){ /* polling terlalu cepat */ return; }
+    stopLoginPolling();
+    if (tok.access_token){
+      tokenEl.value = tok.access_token;
+      lstat.className = 'lstat ok';
+      lstat.textContent = '✓ Login sukses! Token terisi otomatis.';
+      setLoginBtn('✓ Login', true);
+      setTimeout(() => modal.classList.remove('open'), 1600);
+    } else {
+      lstat.className = 'lstat err';
+      lstat.textContent = 'Gagal: ' + (tok.error_description || tok.error || 'tidak diketahui');
+    }
+  }, interval);
+}
+
+$('loginBtn').addEventListener('click', startDeviceLogin);
+$('loginClose').addEventListener('click', () => { stopLoginPolling(); $('loginModal').classList.remove('open'); });
+$('loginOpenGh').addEventListener('click', () => window.open('https://github.com/login/device', '_blank', 'noopener'));
+// Kalau token sudah tersimpan dari sesi sebelumnya (localStorage), tampilkan status login
+try {
+  const saved = localStorage.getItem('uprepo_token');
+  if (saved){ tokenEl.value = saved; setLoginBtn('✓ Login', true); }
+  tokenEl.addEventListener('input', () => {
+    try { tokenEl.value ? localStorage.setItem('uprepo_token', tokenEl.value) : localStorage.removeItem('uprepo_token'); } catch(e){}
+    setLoginBtn(tokenEl.value ? '✓ Login' : 'Login GitHub', !!tokenEl.value);
+  });
+} catch(e){}
 
 function formatSize(bytes){
   if (bytes < 1024) return bytes + ' B';
@@ -1292,5 +1418,18 @@ async function deleteFile(path, sha){
 deleteFileBtn.addEventListener('click', () => { if (currentFile) deleteFile(currentFile.path, currentFile.sha); });
 closeViewerBtn.addEventListener('click', () => viewerEl.classList.remove('show'));
 </script>
+<div class="login-modal" id="loginModal">
+  <div class="login-card">
+    <h3>🔐 Login GitHub</h3>
+    <p id="loginStep1">1. Klik kode di bawah untuk menyalin, lalu buka halaman aktivasi:</p>
+    <div class="ucode" id="ucode" title="klik untuk salin">····-····</div>
+    <p>2. Buka <a href="https://github.com/login/device" target="_blank" rel="noopener">github.com/login/device</a> dan tempel kodenya, lalu izinkan <b>UpRepo</b>.</p>
+    <div class="lstat" id="lstat">Menunggu otorisasi…</div>
+    <div class="login-actions">
+      <button type="button" class="mini-btn" id="loginOpenGh">Buka github.com/login/device ↗</button>
+      <button type="button" class="mini-btn ghost2" id="loginClose">Tutup</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
