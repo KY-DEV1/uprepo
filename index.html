@@ -502,7 +502,7 @@
 
   <footer>
     Berjalan sepenuhnya di browser kamu — tidak ada server perantara. Permintaan dikirim langsung ke <code>api.github.com</code> memakai token yang kamu masukkan. File <code>.zip</code> otomatis dibongkar di browser (pakai JSZip, tidak diupload ke mana pun) lalu tiap isinya di-push jadi satu commit — bisa dimatikan lewat checkbox kalau maunya file .zip-nya sendiri yang diupload. Untuk file/zip besar (puluhan MB), proses hashing &amp; ekstraksi bisa memakan waktu beberapa detik.
-    <br><span id="appVersion" style="opacity:.6">v2.3</span>
+    <br><span id="appVersion" style="opacity:.6">v2.4</span>
   </footer>
 
   <div class="browser-section">
@@ -590,7 +590,8 @@ $('toggleToken').addEventListener('click', () => {
 // Refresh-proof: proses login yang sedang berjalan disimpan di sessionStorage
 // dan dilanjutkan otomatis saat halaman di-refresh/dibuka lagi.
 const GH_CLIENT_ID = 'Ov23liPG3pVmZ5vZWBkc';
-const RELAYS = ['https://cors.redoc.ly/', 'https://cors.redoc.ly/', 'https://api.codetabs.com/v1/proxy?quest=']; // redoc dicoba 2x (retry) sebelum fallback
+const ORIGIN_RELAY = location.origin + '/api/ghrelay/r?target='; // relay privat (Vercel function)
+const RELAYS = [ORIGIN_RELAY, ORIGIN_RELAY, 'https://cors.redoc.ly/', 'https://api.codetabs.com/v1/proxy?quest=']; // relay privat dulu, publik sebagai fallback
 let loginPolling = null;
 let pollFailCount = 0;
 
@@ -610,9 +611,13 @@ async function verifyToken(token){
 
 async function relayPost(url, params){
   const body = new URLSearchParams(params).toString();
+  const target = url.endsWith('/device/code') ? 'device' : 'token';
   let lastErr;
   for (const base of RELAYS){
-    const u = base.includes('?quest=') ? base + encodeURIComponent(url) : base + url;
+    let u;
+    if (base === ORIGIN_RELAY) u = base + target;              // relay privat: ?target=device|token
+    else if (base.includes('?quest=')) u = base + encodeURIComponent(url); // codetabs
+    else u = base + url;                                        // redoc
     try {
       const r = await fetch(u, {
         method: 'POST',
