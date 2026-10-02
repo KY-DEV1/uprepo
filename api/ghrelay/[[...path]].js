@@ -1,28 +1,23 @@
-// Vercel Serverless Function: /api/ghrelay
+// Vercel Serverless Function: /api/ghrelay?target=device  (atau target=token)
 // CORS relay untuk GitHub OAuth Device Flow (hanya 2 endpoint GitHub, method POST)
-// Deploy: letakkan file ini di folder api/ pada project Vercel kamu (minekeneko.my.id)
+// Catatan: path multi-segment (/api/ghrelay/a/b) tidak dirouting Vercel ke catch-all,
+// jadi target endpoint dikirim lewat query param.
 
-const ALLOWED_HOSTS = ["github.com"];
-const ALLOWED_PATHS = ["/login/device/code", "/login/oauth/access_token"];
+const ALLOWED = {
+  device: "https://github.com/login/device/code",
+  token: "https://github.com/login/oauth/access_token",
+};
 
 export default async function handler(req, res) {
-  // CORS headers
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  if (req.method === "OPTIONS") {
-    return res.status(204).end();
-  }
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "POST only" });
-  }
+  if (req.method === "OPTIONS") return res.status(204).end();
+  if (req.method !== "POST") return res.status(405).json({ error: "POST only" });
 
-  // Path tujuan: /api/ghrelay/<path>
-  const targetPath = "/" + (req.query.path || "").replace(/^\/+/, "");
-  if (!ALLOWED_PATHS.includes(targetPath)) {
-    return res.status(400).json({ error: "path not allowed" });
-  }
+  const target = ALLOWED[req.query.target];
+  if (!target) return res.status(400).json({ error: "target must be 'device' or 'token'" });
 
   try {
     const body = await new Promise((resolve) => {
@@ -31,7 +26,7 @@ export default async function handler(req, res) {
       req.on("end", () => resolve(data));
     });
 
-    const upstream = await fetch("https://github.com" + targetPath, {
+    const upstream = await fetch(target, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
